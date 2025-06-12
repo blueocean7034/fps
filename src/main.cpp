@@ -3,6 +3,7 @@
 #include <SDL_opengl.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -21,6 +22,39 @@ struct Camera {
         return glm::lookAt(position, position + glm::normalize(front), {0.0f, 1.0f, 0.0f});
     }
 };
+
+GLuint compileShader(GLenum type, const char* src) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &src, nullptr);
+    glCompileShader(shader);
+    GLint success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char log[512];
+        glGetShaderInfoLog(shader, 512, nullptr, log);
+        std::cerr << "Shader compile error: " << log << std::endl;
+    }
+    return shader;
+}
+
+GLuint createProgram(const char* vsSrc, const char* fsSrc) {
+    GLuint vs = compileShader(GL_VERTEX_SHADER, vsSrc);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, fsSrc);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    GLint success;
+    glGetProgramiv(prog, GL_LINK_STATUS, &success);
+    if (!success) {
+        char log[512];
+        glGetProgramInfoLog(prog, 512, nullptr, log);
+        std::cerr << "Program link error: " << log << std::endl;
+    }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    return prog;
+}
 
 bool initSDL(SDL_Window** window, SDL_GLContext* context, int width, int height) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
@@ -91,7 +125,66 @@ int main(int argc, char** argv) {
     glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
 
-    GLuint vao; glGenVertexArrays(1, &vao); glBindVertexArray(vao);
+    const char* vsSrc =
+        "#version 330 core\n"
+        "layout(location = 0) in vec3 aPos;\n"
+        "layout(location = 1) in vec3 aColor;\n"
+        "out vec3 vColor;\n"
+        "uniform mat4 uMVP;\n"
+        "void main() {\n"
+        "    vColor = aColor;\n"
+        "    gl_Position = uMVP * vec4(aPos, 1.0);\n"
+        "}";
+
+    const char* fsSrc =
+        "#version 330 core\n"
+        "in vec3 vColor;\n"
+        "out vec4 FragColor;\n"
+        "void main() {\n"
+        "    FragColor = vec4(vColor, 1.0);\n"
+        "}";
+
+    GLuint program = createProgram(vsSrc, fsSrc);
+
+    float vertices[] = {
+        // positions         // colors
+        -0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.0f,
+         0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.0f,
+         0.5f,  0.5f, -0.5f, 0.0f, 0.0f, 1.0f,
+        -0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 0.0f,
+        -0.5f, -0.5f,  0.5f, 1.0f, 0.0f, 1.0f,
+         0.5f, -0.5f,  0.5f, 0.0f, 1.0f, 1.0f,
+         0.5f,  0.5f,  0.5f, 1.0f, 0.5f, 0.0f,
+        -0.5f,  0.5f,  0.5f, 0.5f, 0.0f, 0.5f
+    };
+
+    unsigned int indices[] = {
+        0,1,2, 2,3,0,
+        4,5,6, 6,7,4,
+        4,7,3, 3,0,4,
+        1,5,6, 6,2,1,
+        3,2,6, 6,7,3,
+        4,5,1, 1,0,4
+    };
+
+    GLuint VAO, VBO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glBindVertexArray(0);
+
+
+    glm::mat4 projection = glm::perspective(glm::radians(60.0f), width / float(height), 0.1f, 100.0f);
 
     bool running = true;
     Camera cam;
@@ -115,10 +208,20 @@ int main(int argc, char** argv) {
         glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // for now no geometry, just clear and present
+        glm::mat4 view = cam.getViewMatrix();
+        glm::mat4 mvp = projection * view;
+        glUseProgram(program);
+        glUniformMatrix4fv(glGetUniformLocation(program, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+        glBindVertexArray(VAO);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
         SDL_GL_SwapWindow(window);
     }
 
+    glDeleteProgram(program);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+    glDeleteVertexArrays(1, &VAO);
     SDL_GL_DeleteContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();
