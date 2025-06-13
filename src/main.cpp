@@ -9,7 +9,7 @@
 #include <cmath>
 
 struct Camera {
-    glm::vec3 position{0.0f, 1.0f, 5.0f};
+    glm::vec3 position{0.0f, 1.0f, 0.0f};
     float pitch = 0.0f;
     float yaw = -90.0f;
 
@@ -82,9 +82,12 @@ bool initSDL(SDL_Window** window, SDL_GLContext* context, int width, int height)
     return true;
 }
 
-void processInput(Camera& cam, float deltaTime, const Uint8* keystate, int dx, int dy) {
+void processInput(Camera& cam, float deltaTime, float& velY, bool& onGround,
+                  const Uint8* keystate, int dx, int dy) {
     const float sensitivity = 0.1f;
     const float speed = 5.0f;
+    const float gravity = 9.8f;
+    const float jumpSpeed = 5.0f;
 
     cam.yaw += dx * sensitivity;
     cam.pitch -= dy * sensitivity;
@@ -93,20 +96,31 @@ void processInput(Camera& cam, float deltaTime, const Uint8* keystate, int dx, i
 
     glm::vec3 front{
         cos(glm::radians(cam.yaw)) * cos(glm::radians(cam.pitch)),
-        sin(glm::radians(cam.pitch)),
+        0.0f,
         sin(glm::radians(cam.yaw)) * cos(glm::radians(cam.pitch))
     };
     front = glm::normalize(front);
-
     glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3{0.0f, 1.0f, 0.0f}));
-    glm::vec3 up = glm::normalize(glm::cross(right, front));
 
-    if (keystate[SDL_SCANCODE_W]) cam.position += front * speed * deltaTime;
-    if (keystate[SDL_SCANCODE_S]) cam.position -= front * speed * deltaTime;
-    if (keystate[SDL_SCANCODE_A]) cam.position -= right * speed * deltaTime;
-    if (keystate[SDL_SCANCODE_D]) cam.position += right * speed * deltaTime;
-    if (keystate[SDL_SCANCODE_SPACE]) cam.position += up * speed * deltaTime;
-    if (keystate[SDL_SCANCODE_LCTRL]) cam.position -= up * speed * deltaTime;
+    glm::vec3 move(0.0f);
+    if (keystate[SDL_SCANCODE_W]) move += front;
+    if (keystate[SDL_SCANCODE_S]) move -= front;
+    if (keystate[SDL_SCANCODE_A]) move -= right;
+    if (keystate[SDL_SCANCODE_D]) move += right;
+    if (glm::length(move) > 0.0f) cam.position += glm::normalize(move) * speed * deltaTime;
+
+    if (keystate[SDL_SCANCODE_SPACE] && onGround) {
+        velY = jumpSpeed;
+        onGround = false;
+    }
+
+    velY -= gravity * deltaTime;
+    cam.position.y += velY * deltaTime;
+    if (cam.position.y < 1.0f) {
+        cam.position.y = 1.0f;
+        velY = 0.0f;
+        onGround = true;
+    }
 }
 
 int main(int argc, char** argv) {
@@ -147,15 +161,15 @@ int main(int argc, char** argv) {
     GLuint program = createProgram(vsSrc, fsSrc);
 
     float vertices[] = {
-        // positions         // colors
-        -0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.0f,
-         0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.0f,
-         0.5f,  0.5f, -0.5f, 0.0f, 0.0f, 1.0f,
-        -0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 0.0f,
-        -0.5f, -0.5f,  0.5f, 1.0f, 0.0f, 1.0f,
-         0.5f, -0.5f,  0.5f, 0.0f, 1.0f, 1.0f,
-         0.5f,  0.5f,  0.5f, 1.0f, 0.5f, 0.0f,
-        -0.5f,  0.5f,  0.5f, 0.5f, 0.0f, 0.5f
+        // positions            // colors
+        -10.0f, 0.0f, -10.0f,   0.7f, 0.7f, 0.7f,
+         10.0f, 0.0f, -10.0f,   0.7f, 0.7f, 0.7f,
+         10.0f, 5.0f, -10.0f,   0.7f, 0.7f, 0.7f,
+        -10.0f, 5.0f, -10.0f,   0.7f, 0.7f, 0.7f,
+        -10.0f, 0.0f,  10.0f,   0.7f, 0.7f, 0.7f,
+         10.0f, 0.0f,  10.0f,   0.7f, 0.7f, 0.7f,
+         10.0f, 5.0f,  10.0f,   0.7f, 0.7f, 0.7f,
+        -10.0f, 5.0f,  10.0f,   0.7f, 0.7f, 0.7f
     };
 
     unsigned int indices[] = {
@@ -188,6 +202,8 @@ int main(int argc, char** argv) {
 
     bool running = true;
     Camera cam;
+    float velY = 0.0f;
+    bool onGround = true;
     Uint32 lastTicks = SDL_GetTicks();
 
     while (running) {
@@ -203,7 +219,7 @@ int main(int argc, char** argv) {
         const Uint8* keystate = SDL_GetKeyboardState(NULL);
         if (keystate[SDL_SCANCODE_ESCAPE]) running = false;
 
-        processInput(cam, deltaTime, keystate, dx, dy);
+        processInput(cam, deltaTime, velY, onGround, keystate, dx, dy);
 
         glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
