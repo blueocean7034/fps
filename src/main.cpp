@@ -79,10 +79,29 @@ GLuint loadTexture(const std::string& path) {
     return tex;
 }
 
-std::vector<GLuint> loadNoTextureVariants() {
+std::filesystem::path findImagesDir(const char* exePath) {
+    namespace fs = std::filesystem;
+    fs::path dir{"images"};
+    if (fs::exists(dir)) return dir;
+
+    fs::path exeDir = fs::absolute(exePath).parent_path();
+    dir = exeDir / ".." / "images";
+    if (fs::exists(dir)) return fs::canonical(dir);
+
+    dir = exeDir / "images";
+    if (fs::exists(dir)) return fs::canonical(dir);
+
+    return "images"; // fallback
+}
+
+std::vector<GLuint> loadNoTextureVariants(const std::filesystem::path& dir) {
     namespace fs = std::filesystem;
     std::vector<GLuint> textures;
-    for (auto& p : fs::directory_iterator("images")) {
+    if (!fs::exists(dir)) {
+        std::cerr << "Images directory not found: " << dir << std::endl;
+        return textures;
+    }
+    for (auto& p : fs::directory_iterator(dir)) {
         std::string fname = p.path().filename().string();
         if (fname.rfind("no_texture", 0) == 0 && p.path().extension() == ".png") {
             GLuint tex = loadTexture(p.path().string());
@@ -203,7 +222,8 @@ int main(int argc, char** argv) {
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "uTex"), 0);
 
-    std::vector<GLuint> noTextures = loadNoTextureVariants();
+    std::filesystem::path imageDir = findImagesDir(argv[0]);
+    std::vector<GLuint> noTextures = loadNoTextureVariants(imageDir);
     if (noTextures.empty()) {
         std::cerr << "No placeholder textures found" << std::endl;
         return -1;
